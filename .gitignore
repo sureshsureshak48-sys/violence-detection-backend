@@ -1,0 +1,9 @@
+.idea/
+.gradle/
+target/
+build/
+out/
+.mvn/
+**/serviceAccountKey.json
+__pycache__/
+*.pyc
