@@ -4,6 +4,7 @@ target/
 build/
 out/
 .mvn/
+**/uploads/
 **/serviceAccountKey.json
 __pycache__/
 *.pyc
