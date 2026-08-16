@@ -81,9 +81,14 @@ public class ControlRoomController {
             evidenceRepository.save(evidence);
         }
 
+        int distance = 3 + (int)(Math.random() * 2); // 3 or 4 km
         fcmService.sendToAllUsers(
-                "Violence Detected",
-                finalType + " detected with " + incident.getConfidence() + "% confidence"
+                "⚠️ Violence Alert",
+                "Violence detected nearby (" + distance + " km). " + 
+                (incident.getDescription() != null ? incident.getDescription() : finalType + " detected") + 
+                ". Please be careful!",
+                "incidents",
+                String.valueOf(incident.getId())
         );
 
         return "Incident Approved";

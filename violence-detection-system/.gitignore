@@ -31,3 +31,18 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Media, Models & Datasets ###
+ai-service/models/
+ai-service/evidence/
+ai-service/uploads/
+dataset/
+*.mp4
+*.mp3
+*.wav
+*.mpeg
+*.avi
+*.mkv
+*.pkl
+*.pt
+*.pth

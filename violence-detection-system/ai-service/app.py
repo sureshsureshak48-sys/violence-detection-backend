@@ -53,26 +53,66 @@ def detect_video():
         default=0
     )
 
-    max_persons = merged_objects.get("person", 0)
-
-    if max_persons >= 3:
-        overall_type = "Group Fight"
-    elif max_persons == 2:
-        overall_type = "Assault/Fight"
-    elif merged_objects:
-        overall_type = "Suspicious Activity"
+    video_violence_types = [r["violence_type"] for r in results if r["violence"] and r.get("violence_type")]
+    video_core_contents = [r["core_content"] for r in results if r["violence"] and r.get("core_content")]
+    
+    if video_violence_types:
+        overall_type = video_violence_types[-1] # take the most recent clear type
     else:
-        overall_type = "No clear violence type"
+        max_persons = merged_objects.get("person", 0)
+        if max_persons >= 3:
+            overall_type = "Group Fight"
+        elif max_persons == 2:
+            overall_type = "Assault/Fight"
+        elif merged_objects:
+            overall_type = "Suspicious Activity"
+        else:
+            overall_type = "No clear violence type"
 
     audio_result = audio_detector.detect(video_path)
 
     audio_label = "Unknown"
+    audio_conf = 0.0
 
-    if audio_result["success"]:
-        audio_label = audio_result["result"]
+    if audio_result.get("success"):
+        audio_label = audio_result.get("result", "Unknown")
+        if audio_label == "violence":
+            audio_conf = 66.0
 
     final_violence = violence_found or (audio_label == "violence")
+
+    if video_core_contents:
+        core_content = video_core_contents[-1]
+    else:
+        if audio_label == "violence":
+            core_content = "Scream or distress sound detected in the audio feed."
+        elif final_violence:
+            core_content = "A physical altercation / violence detected."
+        else:
+            core_content = "No violence detected."
+
+    if final_violence:
+        if max_confidence <= 0:
+            max_confidence = audio_conf if audio_conf > 0 else 75.0
+
+        if not violence_found and audio_label == "violence":
+            overall_type = "Audio-Detected Violence (Scream/Distress)"
+
     evidence_path = video_path
+
+    # Extract evidence file paths from the first violent chunk
+    annotated_image_path = ""
+    video_clip_path = ""
+    audio_clip_path = ""
+    for r in results:
+        if r["violence"]:
+            if r.get("annotated_image_path"):
+                annotated_image_path = r["annotated_image_path"]
+            if r.get("video_clip_path"):
+                video_clip_path = r["video_clip_path"]
+            if r.get("audio_clip_path"):
+                audio_clip_path = r["audio_clip_path"]
+            break  # Use the first violent chunk's evidence
 
     response = {
         "status": "SUCCESS",
@@ -80,8 +120,12 @@ def detect_video():
         "confidence": round(max_confidence, 2),
         "audio_result": audio_label,
         "overall_violence_type": overall_type,
+        "core_content": core_content,
         "objects": merged_objects,
         "evidence_path": evidence_path,
+        "annotated_image_path": annotated_image_path,
+        "video_clip_path": video_clip_path,
+        "audio_clip_path": audio_clip_path,
         "violence_events": violence_events
     }
 

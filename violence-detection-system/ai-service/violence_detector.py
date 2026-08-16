@@ -1,39 +1,19 @@
 import cv2
+import numpy as np
+import os
 import torch
 import torch.nn as nn
-import numpy as np
-from pytorchvideo.models.hub import x3d_m
+import pytorchvideo.models.hub as hub
+import subprocess
 from ultralytics import YOLO
-import os
 
-violence_model = x3d_m(pretrained=False)
-violence_model.blocks[5].proj = nn.Sequential(
-    nn.Dropout(p=0.5),
-    nn.Linear(2048, 2)
-)
-checkpoint = torch.load(
-    "models/final/final_x3d_realtime.pt",
-    map_location="cpu",
-    weights_only=False
-)
-
-print("Chosen config:", checkpoint.get("chosen_config"))
-print("Hyper params:", checkpoint.get("hyper_params"))
-print("Final metrics:", checkpoint.get("final_metrics"))
-
-raw_state_dict = checkpoint["model"]
-new_state_dict = {}
-for k, v in raw_state_dict.items():
-    if k.startswith("backbone."):
-        new_key = k[len("backbone."):]
-        new_state_dict[new_key] = v
-    else:
-        new_state_dict[k] = v
-
-result = violence_model.load_state_dict(new_state_dict, strict=False)
-print("Missing:", len(result.missing_keys))
-print("Unexpected:", len(result.unexpected_keys))
+print("Loading Official Pre-trained X3D Action Model...")
+violence_model = hub.x3d_m(pretrained=True)
 violence_model.eval()
+
+# Kinetics-400 Action IDs that represent physical fights / violence
+VIOLENT_ACTION_IDS = {150, 259, 314, 395, 101, 201, 343}
+
 print("Violence model loaded successfully!\n")
 
 yolo_model = YOLO("yolo11m.pt")
@@ -54,11 +34,7 @@ STD = torch.tensor([0.225, 0.225, 0.225]).view(1, 3, 1, 1, 1)
 
 
 def predict_chunk(frames):
-    """
-    X3D model - namba இதை RUN pannurom (active-ah irukum),
-    aana output-ah confidence calculation-ku use pannala.
-    Reference/info matum-ah return pannurom.
-    """
+
     video = np.array(frames, dtype=np.float32)
     video = torch.tensor(video)
     video = video.permute(3, 0, 1, 2)
@@ -68,7 +44,20 @@ def predict_chunk(frames):
     with torch.no_grad():
         output = violence_model(video)
         prob = torch.softmax(output, dim=1)
-        violence_prob = float(prob[0][0])
+        
+        top5_prob, top5_idx = prob.topk(5, dim=1)
+        
+        # Debug: Print the Top-1 predicted class ID and probability
+        top1_id = int(top5_idx[0][0].item())
+        top1_prob = float(top5_prob[0][0].item())
+        print(f"DEBUG - Top-1 Predicted Class ID: {top1_id} with Prob: {round(top1_prob * 100, 2)}%")
+        
+        violence_prob = 0.0
+        for i in range(5):
+            class_id = int(top5_idx[0][i].item())
+            if class_id in VIOLENT_ACTION_IDS:
+                violence_prob = max(violence_prob, float(top5_prob[0][i].item()))
+        
         x3d_confidence = round(violence_prob * 100, 2)
 
     return x3d_confidence
@@ -76,7 +65,7 @@ def predict_chunk(frames):
 
 ALLOWED_OBJECTS = {
     "person", "knife", "gun", "backpack", "handbag",
-    "suitcase", "baseball bat", "bottle"
+    "suitcase", "baseball bat", "bottle", "car", "truck", "bus", "motorcycle", "bicycle", "cell phone"
 }
 
 
@@ -86,7 +75,7 @@ def detect_objects(frame_bgr):
 
     for box in results.boxes:
         conf = float(box.conf[0])
-        if conf < 0.25:
+        if conf < 0.15:
             continue
 
         cls_id = int(box.cls[0])
@@ -95,7 +84,7 @@ def detect_objects(frame_bgr):
         if cls_name not in ALLOWED_OBJECTS:
             continue
 
-        min_conf = 0.30 if cls_name == "person" else 0.45
+        min_conf = 0.10 if cls_name == "person" else 0.10
 
         if conf < min_conf:
             continue
@@ -128,18 +117,14 @@ def get_person_boxes(frame_bgr):
         cls_name = yolo_model.names[cls_id]
         conf = float(box.conf[0])
 
-        if cls_name == "person" and conf >= 0.30:
+        if cls_name == "person" and conf >= 0.10:  # Lowered to 0.10 for dark/night/blurry videos
             person_boxes.append(box.xyxy[0].tolist())
 
     return person_boxes
 
 
 def check_person_proximity(frame_bgr):
-    """
-    STRICT check bro - persons ACTUAL-ah overlap aaganum (touching/grappling),
-    matum standing close-ah irunthaal idhu True aagaathu.
-    Negative dx/dy = boxes overlap aaguthu.
-    """
+
     person_boxes = get_person_boxes(frame_bgr)
 
     close_pairs = 0
@@ -151,8 +136,7 @@ def check_person_proximity(frame_bgr):
             dx = max(x1a, x1b) - min(x2a, x2b)
             dy = max(y1a, y1b) - min(y2a, y2b)
 
-            # strict: boxes ACTUAL overlap aaganum (dx, dy negative-ah irukanum,
-            # konjo margin kudukurom -5 vaikkurom)
+
             if dx < -5 and dy < -5:
                 close_pairs += 1
 
@@ -178,43 +162,67 @@ def compute_motion_intensity(frames):
         count += 1
         prev_gray = gray
 
-    # native Python float-ah force pannurom, numpy float32 illama
+
     return float(total_motion / count) if count else 0.0
 
 
-# Real-world logic-ku rendu vera thresholds:
-# - weapon irundha, konjo lower motion podhum (weapon + slight aggression = dangerous)
-# - weapon illama (bare-hand), higher motion venum (mistake-ah proximity-ah trigger aagaama)
-WEAPON_MOTION_THRESHOLD = 2.0
-UNARMED_MOTION_THRESHOLD = 4.0
+WEAPON_MOTION_THRESHOLD = 1.5
+UNARMED_MOTION_THRESHOLD = 2.5  # Lowered from 4.0 to catch subtle motion in the dark
 
-# X3D-ah oru required gate-ah vaikkurom (AND condition). Idhu matum-ah decide pannaadhu,
-# aana namba signals-oda SERNTHU thaan final violence confirm aagum.
-X3D_MIN_CONFIDENCE = 50.0
+X3D_MIN_CONFIDENCE = 40.0
 
 
-def classify_violence_type(objects, is_weapon_case, person_count):
-    if is_weapon_case:
-        weapons = {"knife", "gun", "pistol"}
-        found_weapons = [w for w in weapons if w in objects]
-        if person_count >= 5:
-            return f"Group Fight with Weapons ({', '.join(found_weapons)})"
-        elif "gun" in found_weapons or "pistol" in found_weapons:
-            return "Robbery / Armed Assault"
+def classify_violence_type(objects, is_violence, person_count, x3d_confidence, motion_val):
+    if not is_violence:
+        return "Normal", "No violence detected."
+
+    # Identify weapons and vehicles
+    weapons = {"knife", "gun", "pistol"}
+    found_weapons = [w for w in weapons if w in objects]
+    
+    vehicles = {"car", "truck", "bus", "van", "motorcycle"}
+    found_vehicles = [v for v in vehicles if v in objects]
+
+    has_bags = any(b in objects for b in ["backpack", "handbag", "suitcase", "bag"])
+
+    # 1. Kidnap heuristic
+    if found_vehicles and person_count >= 1:
+        desc = f"A kidnapping attempt involving a vehicle and {person_count} individual(s) detected."
+        return "Kidnap", desc
+
+    # 2. Robbery heuristic
+    if (found_weapons or has_bags) and person_count >= 1:
+        if found_weapons:
+            desc = f"An armed robbery involving a {', '.join(found_weapons)} and {person_count} individual(s) detected."
         else:
-            return "Assault"
-    else:
+            desc = f"A robbery/snatching attempt involving {person_count} individual(s) detected."
+        return "Robbery", desc
+
+    # 3. Murder heuristic (Severe armed assault)
+    if found_weapons and (x3d_confidence >= 75.0 or motion_val > 4.5):
         if person_count >= 3:
-            return "Group Fight (unarmed)"
-        return "Physical Altercation (unarmed)"
+            desc = f"A man assaulted/murdered by {person_count - 1} men with a {found_weapons[0]}."
+        else:
+            desc = f"A man attacked/murdered by an armed assailant."
+        return "Murder", desc
+
+    # 4. Group Fight
+    if person_count >= 3:
+        desc = f"A group fight involving {person_count} individuals detected."
+        return "Group Fight", desc
+
+    # 5. Assault
+    if person_count == 2:
+        desc = f"An assault/fight between 2 individuals detected."
+        return "Assault", desc
+
+    # General Fallback
+    desc = "A physical altercation / violence detected."
+    return "Assault", desc
 
 
 def scale_confidence(motion_intensity, threshold, base=55, ceiling=97):
-    """
-    Motion intensity threshold-ah evlo excess-ah kadanthirukko-nu vachi
-    55-97 range-ku gradual-ah scale pannurom. Threshold-ku konjo mela na
-    low confidence (borderline), threshold-ku romba mela na high confidence.
-    """
+
     if threshold <= 0:
         return base
 
@@ -226,65 +234,130 @@ def scale_confidence(motion_intensity, threshold, base=55, ceiling=97):
     return float(round(scaled, 2))
 
 
-def evaluate_violence(raw_frames, x3d_confidence):
-    """
-    Real-world logic bro:
-    - Weapon matum irundha (police officer standing calm mari) -> VIOLENCE ILLA
-    - Weapon + aggressive movement (high motion) -> VIOLENCE (armed attack)
-    - People close-ah nikkiranga matum (standing/talking) -> VIOLENCE ILLA
-    - People close + aggressive movement -> VIOLENCE (physical fight)
-    - X3D confidence idhu DECISION-la pangu edukaathu (unreliable-ah irundhadhaala),
-      response-la "x3d_reference_score" nu matum info-ku kudukurom.
-    """
-    mid_frame = raw_frames[len(raw_frames) // 2]
-    objects_decision = detect_objects(mid_frame)
-
-    sampled = raw_frames[::4] if len(raw_frames) >= 8 else raw_frames
-    motion_intensity = compute_motion_intensity(sampled)
-
-    weapons = {"knife", "gun", "pistol"}
-    found_weapons = [w for w in weapons if w in objects_decision]
-
-    proximity_close, person_count = check_person_proximity(mid_frame)
-
-    print(f"Motion intensity: {round(motion_intensity, 3)} | "
-          f"Weapons: {found_weapons} | Proximity: {proximity_close} | "
-          f"Persons: {person_count} | X3D ref (info only): {x3d_confidence}%")
-
-    # CASE 1: Weapon irukku - aana weapon MATUM podhaathu, aggression (motion) um venum
-    if found_weapons:
-        if motion_intensity > WEAPON_MOTION_THRESHOLD:
-            objects_full = detect_objects_multi_frame(raw_frames, sample_count=5)
-            person_count_full = max(person_count, objects_full.get("person", 0))
-            v_type = classify_violence_type(objects_full, True, person_count_full)
-
-            # weapon cases konjo high base confidence-ah start pannurom (65-98 range)
-            our_confidence = scale_confidence(
-                motion_intensity, WEAPON_MOTION_THRESHOLD, base=65, ceiling=98
-            )
-            return True, v_type, objects_full, our_confidence, x3d_confidence
-
-        # weapon irundhalum, calm-ah irukaanga (officer holding gun mari) - violence illa
-        return False, None, objects_decision, float(round(motion_intensity * 15, 2)), x3d_confidence
-
-    # CASE 2: Weapon illama - proximity + motion venum (X3D condition illa)
-    if proximity_close and motion_intensity > UNARMED_MOTION_THRESHOLD:
-        objects_full = detect_objects_multi_frame(raw_frames, sample_count=5)
-        person_count_full = max(person_count, objects_full.get("person", 0))
-        v_type = classify_violence_type(objects_full, False, person_count_full)
-
-        # unarmed cases konjo modest base confidence-ah start pannurom (50-95 range)
-        our_confidence = scale_confidence(
-            motion_intensity, UNARMED_MOTION_THRESHOLD, base=50, ceiling=95
-        )
-        return True, v_type, objects_full, our_confidence, x3d_confidence
-
-    # proximity illama, illa motion kammiya irundha (standing/talking) - violence illa
-    our_confidence = float(round(motion_intensity * 15, 2))
-    return False, None, objects_decision, our_confidence, x3d_confidence
+def trim_video_and_extract_audio(video_path, start_time, timestamp):
+    evidence_dir = "evidence"
+    os.makedirs(evidence_dir, exist_ok=True)
+    
+    video_clip_name = f"clip_{timestamp}.mp4".replace(":", "-").replace(" ", "_")
+    audio_clip_name = f"audio_{timestamp}.mp3".replace(":", "-").replace(" ", "_")
+    
+    video_clip_path = os.path.join(evidence_dir, video_clip_name)
+    audio_clip_path = os.path.join(evidence_dir, audio_clip_name)
+    
+    ffmpeg_path = "D:\\ffmpeg-9.0-essentials_build\\ffmpeg-9.0-essentials_build\\bin\\ffmpeg.exe"
+    
+    # 1. Trim 5-second video clip using FFmpeg and re-encode as H264 for mobile compatibility
+    video_cmd = [
+        ffmpeg_path, "-y",
+        "-ss", str(max(0.0, start_time)),
+        "-i", video_path,
+        "-t", "5",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        video_clip_path
+    ]
+    
+    # 2. Extract 5-second audio clip as MP3
+    audio_cmd = [
+        ffmpeg_path, "-y",
+        "-ss", str(max(0.0, start_time)),
+        "-i", video_path,
+        "-t", "5",
+        "-vn",
+        "-acodec", "libmp3lame",
+        audio_clip_path
+    ]
+    
+    try:
+        subprocess.run(video_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        print(f"FFmpeg trim error: {e}")
+        
+    return video_clip_path, audio_clip_path
 
 
-def analyze_full_video(video_path, chunk_size=16, stride=16):
+def evaluate_violence(raw_frames, high_res_frame, x3d_confidence, timestamp):
+    # Run YOLO and get the full result to plot boxes on high_res_frame
+    yolo_results = yolo_model(high_res_frame, verbose=False)[0]
+    
+    # Use helper with updated sensitive thresholds on high_res_frame
+    objects_detected = detect_objects(high_res_frame)
+
+    person_count = objects_detected.get("person", 0)
+
+    is_violence = (x3d_confidence >= 40.0)
+    motion = compute_motion_intensity(raw_frames)
+    
+    # Check for weapons, vehicles, and bags/phones
+    has_weapon = any(w in objects_detected for w in ["knife", "gun"])
+    has_vehicle = any(v in objects_detected for v in ["car", "truck", "bus", "motorcycle", "bicycle"])
+    has_bag_or_phone = any(item in objects_detected for item in ["backpack", "handbag", "suitcase", "cell phone"])
+    
+    # Calculate average pixel intensity to check if it is a night/low-light scene
+    avg_intensity = np.mean(high_res_frame)
+    is_low_light = avg_intensity < 65.0 # Threshold for night vision
+    
+    if is_low_light:
+        print(f"DEBUG - Low Light Scene Detected (Avg Intensity: {round(avg_intensity, 2)})")
+
+    # 1. Force Violence if Weapons are detected (Robbery / Murder)
+    if has_weapon and person_count >= 1:
+        is_violence = True
+        x3d_confidence = max(x3d_confidence, 85.0)
+        print("FORCE VIOLENCE: Weapon detected during altercation.")
+        
+    # 2. Force Violence if vehicles and individuals are present with motion (Kidnap)
+    elif has_vehicle and person_count >= 1 and motion > 0.05:
+        is_violence = True
+        x3d_confidence = max(x3d_confidence, 70.0)
+        print("FORCE VIOLENCE: Vehicle and individual(s) detected with movement.")
+
+    # 3. Fallback logic for normal/night fights and snatching robbery
+    else:
+        people_close, p_count = check_person_proximity(high_res_frame)
+        
+        # Lower motion thresholds if low light / night vision environment
+        motion_threshold = 0.5 if is_low_light else 1.0
+        extreme_motion_threshold = 1.0 if is_low_light else 2.5
+        
+        # Snatching detection: person with a bag/phone + slight motion
+        is_snatching = (p_count >= 1) and has_bag_or_phone and (motion > 0.03)
+        
+        # Night time robbery: person moving in the dark
+        is_night_robbery = is_low_light and (p_count >= 1) and (motion > 0.03)
+        
+        print(f"DEBUG - Proximity Check | Motion: {round(motion, 2)} | Persons: {p_count} | Close: {people_close} | Snatching/Night Check: {is_snatching or is_night_robbery}")
+        
+        if is_snatching or is_night_robbery:
+            is_violence = True
+            x3d_confidence = max(x3d_confidence, scale_confidence(motion, 0.03, 65, 88))
+            print("FORCE VIOLENCE: Robbery/Snatching detected based on object context and motion.")
+        elif not is_violence:
+            if motion > extreme_motion_threshold or (p_count >= 2 and motion > motion_threshold) or (people_close and motion > 0.1):
+                is_violence = True
+                x3d_confidence = scale_confidence(motion, motion_threshold, 60, 95)
+    # ---------------------------------------
+
+    v_type, core_content = classify_violence_type(
+        objects_detected, is_violence, person_count, x3d_confidence, motion
+    )
+
+    annotated_image_path = ""
+    if is_violence:
+        evidence_dir = "evidence"
+        os.makedirs(evidence_dir, exist_ok=True)
+        img_name = f"annotated_{timestamp}.jpg".replace(":", "-").replace(" ", "_")
+        annotated_image_path = os.path.join(evidence_dir, img_name)
+        annotated_frame = yolo_results.plot()
+        cv2.imwrite(annotated_image_path, annotated_frame)
+
+    print(f"Final Violence Confidence: {x3d_confidence}% | Violence: {is_violence} | Type: {v_type}")
+    return is_violence, v_type, core_content, objects_detected, x3d_confidence, x3d_confidence, annotated_image_path
+
+
+def analyze_full_video(video_path, chunk_size=16, stride=16):  # Changed stride to 16 for 2x speedup
 
     evidence_dir = "evidence"
     os.makedirs(evidence_dir, exist_ok=True)
@@ -294,6 +367,7 @@ def analyze_full_video(video_path, chunk_size=16, stride=16):
 
     frame_buffer = []
     raw_frame_buffer = []
+    high_res_buffer = []
     frame_idx = 0
     results = []
     consecutive_violent = 0  # loop-ku VELIYA, once matum initialize
@@ -310,54 +384,67 @@ def analyze_full_video(video_path, chunk_size=16, stride=16):
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
 
         frame_buffer.append(rgb)
-        raw_frame_buffer.append(enhanced)
+        raw_frame_buffer.append(resized)  # HUGE Speedup: Run optical flow & YOLO on 224x224 instead of HD 1080p
+        high_res_buffer.append(enhanced)
 
         frame_idx += 1
 
         if len(frame_buffer) == chunk_size:
 
-            # X3D run pannurom (reference-ku), decision-ku use pannala
+
             x3d_confidence = predict_chunk(frame_buffer)
 
             timestamp = round((frame_idx - chunk_size) / fps, 2)
+            
+            mid_high_res = high_res_buffer[len(high_res_buffer) // 2]
 
-            is_violence_raw, violence_type, objects, our_confidence, x3d_ref = \
-                evaluate_violence(raw_frame_buffer, x3d_confidence)
+            is_violence_raw, violence_type, core_content, objects, our_confidence, x3d_ref, annotated_img = \
+                evaluate_violence(raw_frame_buffer, mid_high_res, x3d_confidence, timestamp)
 
             if is_violence_raw:
                 consecutive_violent += 1
             else:
                 consecutive_violent = 0
 
-            # 2+ consecutive chunks venum confirm aaga (stride=16, fps=25 na
-            # ~1.3 sec continuous signal venum)
-            is_violence = consecutive_violent >= 3
+            # Trigger violence immediately if at least 1 chunk is detected as violent
+            is_violence = consecutive_violent >= 1
 
             entry = {
                 "time_sec": timestamp,
                 "violence": is_violence,
-                "confidence": our_confidence,       # NAMBA formula vachi calculate pannina confidence
-                "x3d_reference_score": x3d_ref,      # X3D output - display/reference-ku matum
+                "confidence": our_confidence,
+                "x3d_reference_score": x3d_ref,
                 "objects": objects,
                 "violence_type": violence_type if is_violence else None,
-                "evidence_path": ""
+                "core_content": core_content if is_violence else "No violence detected.",
+                "evidence_path": "",
+                "annotated_image_path": annotated_img if is_violence else "",
+                "video_clip_path": "",
+                "audio_clip_path": ""
             }
 
             if is_violence:
+                # Save raw evidence screenshot
                 evidence_name = f"violence_{frame_idx}.jpg"
                 evidence_path = os.path.join(evidence_dir, evidence_name)
-
                 cv2.imwrite(
                     evidence_path,
-                    raw_frame_buffer[len(raw_frame_buffer) // 2]
+                    high_res_buffer[len(high_res_buffer) // 2]
                 )
-
                 entry["evidence_path"] = evidence_path
+
+                # Trim 5-second video clip and extract audio using FFmpeg
+                clip_path, audio_path = trim_video_and_extract_audio(
+                    video_path, timestamp, timestamp
+                )
+                entry["video_clip_path"] = clip_path
+                entry["audio_clip_path"] = audio_path
 
             results.append(entry)
 
             frame_buffer = frame_buffer[stride:]
             raw_frame_buffer = raw_frame_buffer[stride:]
+            high_res_buffer = high_res_buffer[stride:]
 
     cap.release()
 

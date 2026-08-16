@@ -28,6 +28,8 @@ public class Incident {
 
     private String audioResult;
 
+    private String createdAt = java.time.LocalDateTime.now().toString();
+
     public enum IncidentStatus {
 
         PENDING,

@@ -17,4 +17,9 @@ public class EvidenceController {
 
         return evidenceRepository.findAll();
     }
+
+    @GetMapping("/incident/{incidentId}")
+    public List<Evidence> getEvidenceByIncident(@PathVariable Long incidentId) {
+        return evidenceRepository.findByIncidentId(incidentId);
+    }
 }

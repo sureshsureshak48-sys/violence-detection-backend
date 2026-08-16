@@ -29,6 +29,9 @@ public class RtspStreamService {
     @Autowired
     private IncidentRepository incidentRepository;
 
+    @Autowired
+    private EvidenceRepository evidenceRepository;
+
     private final RestTemplate restTemplate = new RestTemplate();
 
     // ~2-3 seconds of clip per analysis chunk (fps depend pannirukum)
@@ -146,7 +149,9 @@ public class RtspStreamService {
 
                 incident.setEvidencePath(clipPath);
 
-                incident.setDescription(response.getBody());
+                incident.setDescription(
+                        json.path("core_content").asText("A physical altercation / violence detected.")
+                );
 
                 incident.setStatus(Incident.IncidentStatus.PENDING);
 
@@ -154,7 +159,37 @@ public class RtspStreamService {
 
                 incidentRepository.save(incident);
 
-                System.out.println("INCIDENT CREATED FROM CAMERA");
+                // Save annotated image evidence
+                String annotatedPath = json.path("annotated_image_path").asText("");
+                if (!annotatedPath.isEmpty()) {
+                    Evidence imgEvidence = new Evidence();
+                    imgEvidence.setIncidentId(incident.getId());
+                    imgEvidence.setFilePath(annotatedPath);
+                    imgEvidence.setFileType("IMAGE");
+                    evidenceRepository.save(imgEvidence);
+                }
+
+                // Save video clip evidence
+                String videoClipPath = json.path("video_clip_path").asText("");
+                if (!videoClipPath.isEmpty()) {
+                    Evidence vidEvidence = new Evidence();
+                    vidEvidence.setIncidentId(incident.getId());
+                    vidEvidence.setFilePath(videoClipPath);
+                    vidEvidence.setFileType("VIDEO");
+                    evidenceRepository.save(vidEvidence);
+                }
+
+                // Save audio clip evidence
+                String audioClipPath = json.path("audio_clip_path").asText("");
+                if (!audioClipPath.isEmpty()) {
+                    Evidence audEvidence = new Evidence();
+                    audEvidence.setIncidentId(incident.getId());
+                    audEvidence.setFilePath(audioClipPath);
+                    audEvidence.setFileType("AUDIO");
+                    evidenceRepository.save(audEvidence);
+                }
+
+                System.out.println("INCIDENT AND EVIDENCE CREATED FROM CAMERA");
             }
 
         } catch (Exception e) {

@@ -129,31 +129,52 @@ public class MediaController {
                     ).asText("Unknown")
             );
 
+            String coreContent = json.path("core_content").asText("A physical altercation / violence detected.");
+            StringBuilder objStr = new StringBuilder();
+            if (json.has("objects") && !json.get("objects").isEmpty()) {
+                objStr.append(" | Objects: ");
+                json.get("objects").fields().forEachRemaining(entry -> {
+                    objStr.append(entry.getKey()).append("(").append(entry.getValue().asInt()).append(") ");
+                });
+            }
+
+            incident.setDescription(coreContent + objStr.toString());
+
             incident.setEvidencePath(filePath);
 
             incident.setStatus(Incident.IncidentStatus.PENDING);
 
             incidentRepository.save(incident);
 
-            Evidence evidence = new Evidence();
+            // Save annotated image evidence
+            String annotatedPath = json.path("annotated_image_path").asText("");
+            if (!annotatedPath.isEmpty()) {
+                Evidence imgEvidence = new Evidence();
+                imgEvidence.setIncidentId(incident.getId());
+                imgEvidence.setFilePath(annotatedPath);
+                imgEvidence.setFileType("IMAGE");
+                evidenceRepository.save(imgEvidence);
+            }
 
-            evidence.setIncidentId(
-                    incident.getId()
-            );
+            // Save video clip evidence
+            String videoClipPath = json.path("video_clip_path").asText("");
+            if (!videoClipPath.isEmpty()) {
+                Evidence vidEvidence = new Evidence();
+                vidEvidence.setIncidentId(incident.getId());
+                vidEvidence.setFilePath(videoClipPath);
+                vidEvidence.setFileType("VIDEO");
+                evidenceRepository.save(vidEvidence);
+            }
 
-            evidence.setFilePath(
-                    filePath
-            );
-
-            evidence.setFileType(
-                    filename.endsWith(".mp4")
-                            ? "VIDEO"
-                            : "IMAGE"
-            );
-
-            evidenceRepository.save(
-                    evidence
-            );
+            // Save audio clip evidence
+            String audioClipPath = json.path("audio_clip_path").asText("");
+            if (!audioClipPath.isEmpty()) {
+                Evidence audEvidence = new Evidence();
+                audEvidence.setIncidentId(incident.getId());
+                audEvidence.setFilePath(audioClipPath);
+                audEvidence.setFileType("AUDIO");
+                evidenceRepository.save(audEvidence);
+            }
         }
 
         return response.getBody();

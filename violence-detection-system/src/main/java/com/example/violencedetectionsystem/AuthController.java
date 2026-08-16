@@ -25,6 +25,7 @@ public class AuthController {
 
                 response.put("status", "Login Success");
                 response.put("userId", user.getId());
+                response.put("role", user.getRole() != null ? user.getRole() : "USER");
                 return response;
             }
         }
