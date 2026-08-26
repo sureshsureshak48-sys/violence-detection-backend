@@ -3,26 +3,25 @@ package com.example.violencedetectionsystem;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-import java.io.File;
+import java.nio.file.Paths;
+
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Absolute path to your dataset folder on D: drive
-        String datasetPath = new File("dataset").getAbsolutePath();
-
         // Exposes http://localhost:8080/dataset/... to your Flutter frontend
+        String datasetUri = Paths.get("dataset").toUri().toString();
         registry.addResourceHandler("/dataset/**")
-                .addResourceLocations("file:" + datasetPath + "/");
+                .addResourceLocations(datasetUri);
 
         // Serve evidence files (annotated images, video clips, audio clips)
-        String evidencePath = new File("ai-service/evidence").getAbsolutePath();
+        String evidenceUri = Paths.get("ai-service", "evidence").toUri().toString();
         registry.addResourceHandler("/evidence/**")
-                .addResourceLocations("file:" + evidencePath + "/");
+                .addResourceLocations(evidenceUri);
 
         // Serve uploaded files
-        String uploadsPath = new File("ai-service/uploads").getAbsolutePath();
+        String uploadsUri = Paths.get("ai-service", "uploads").toUri().toString();
         registry.addResourceHandler("/uploads/**")
-                .addResourceLocations("file:" + uploadsPath + "/");
+                .addResourceLocations(uploadsUri);
     }
 }

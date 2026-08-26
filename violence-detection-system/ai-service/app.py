@@ -37,6 +37,9 @@ def detect_video():
     violence_events = []
 
     for r in results:
+        for obj, count in r.get("objects", {}).items():
+            merged_objects[obj] = max(merged_objects.get(obj, 0), count)
+            
         if r["violence"]:
             violence_events.append({
                 "time_sec": r["time_sec"],
@@ -44,9 +47,6 @@ def detect_video():
                 "violence_type": r["violence_type"],
                 "objects": r["objects"]
             })
-
-            for obj, count in r["objects"].items():
-                merged_objects[obj] = max(merged_objects.get(obj, 0), count)
 
     max_confidence = max(
         [r["confidence"] for r in results if r["violence"]],
@@ -205,4 +205,4 @@ def analyze_rtsp():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=7860)

@@ -244,7 +244,7 @@ def trim_video_and_extract_audio(video_path, start_time, timestamp):
     video_clip_path = os.path.join(evidence_dir, video_clip_name)
     audio_clip_path = os.path.join(evidence_dir, audio_clip_name)
     
-    ffmpeg_path = "D:\\ffmpeg-9.0-essentials_build\\ffmpeg-9.0-essentials_build\\bin\\ffmpeg.exe"
+    ffmpeg_path = "ffmpeg"
     
     # 1. Trim 5-second video clip using FFmpeg and re-encode as H264 for mobile compatibility
     video_cmd = [

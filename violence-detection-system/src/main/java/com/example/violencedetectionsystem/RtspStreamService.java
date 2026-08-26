@@ -34,6 +34,9 @@ public class RtspStreamService {
 
     private final RestTemplate restTemplate = new RestTemplate();
 
+    @org.springframework.beans.factory.annotation.Value("${AI_SERVICE_URL:http://127.0.0.1:5000}")
+    private String aiServiceUrl;
+
     // ~2-3 seconds of clip per analysis chunk (fps depend pannirukum)
     private static final int CLIP_FRAME_COUNT = 48;
 
@@ -123,7 +126,7 @@ public class RtspStreamService {
 
             // /detect (image) ku pathila /detect-video - idhu namba full weapon+motion+audio logic
             ResponseEntity<String> response = restTemplate.postForEntity(
-                    "http://127.0.0.1:5000/detect-video",
+                    aiServiceUrl + "/detect-video",
                     request,
                     String.class
             );
@@ -149,9 +152,15 @@ public class RtspStreamService {
 
                 incident.setEvidencePath(clipPath);
 
-                incident.setDescription(
-                        json.path("core_content").asText("A physical altercation / violence detected.")
-                );
+                String coreContent = json.path("core_content").asText("A physical altercation / violence detected.");
+                StringBuilder objStr = new StringBuilder();
+                if (json.has("objects") && !json.get("objects").isEmpty()) {
+                    objStr.append(" | Objects: ");
+                    json.get("objects").fields().forEachRemaining(entry -> {
+                        objStr.append(entry.getKey()).append("(").append(entry.getValue().asInt()).append(") ");
+                    });
+                }
+                incident.setDescription(coreContent + objStr.toString());
 
                 incident.setStatus(Incident.IncidentStatus.PENDING);
 

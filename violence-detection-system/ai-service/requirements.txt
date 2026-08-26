@@ -1,0 +1,11 @@
+flask
+torch
+torchvision
+torchaudio
+opencv-python-headless
+ultralytics
+numpy
+librosa
+scikit-learn
+pytorchvideo
+gradio

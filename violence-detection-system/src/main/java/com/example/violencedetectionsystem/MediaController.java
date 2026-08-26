@@ -23,6 +23,9 @@ public class MediaController {
     @Autowired
     private RestTemplate restTemplate;
 
+    @org.springframework.beans.factory.annotation.Value("${AI_SERVICE_URL:http://127.0.0.1:5000}")
+    private String aiServiceUrl;
+
     @Autowired
     private IncidentRepository incidentRepository;
 
@@ -78,11 +81,11 @@ public class MediaController {
                 || filename.endsWith(".flv")
                 || filename.endsWith(".wmv")) {
 
-            endpoint = "http://127.0.0.1:5000/detect-video";
+            endpoint = aiServiceUrl + "/detect-video";
 
         } else {
 
-            endpoint = "http://127.0.0.1:5000/detect";
+            endpoint = aiServiceUrl + "/detect";
 
         }
         System.out.println("FILE = " + filename);
