@@ -9,18 +9,21 @@ import java.nio.file.Paths;
 public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Exposes http://localhost:8080/dataset/... to your Flutter frontend
-        String datasetUri = Paths.get("dataset").toUri().toString();
+        String baseDir = System.getProperty("user.dir");
+
+        String datasetUri = new java.io.File("dataset").toURI().toString();
+        if (!datasetUri.endsWith("/")) datasetUri += "/";
         registry.addResourceHandler("/dataset/**")
                 .addResourceLocations(datasetUri);
 
-        // Serve evidence files (annotated images, video clips, audio clips)
-        String evidenceUri = Paths.get("ai-service", "evidence").toUri().toString();
+        String evidenceUri = new java.io.File("ai-service/evidence").toURI().toString();
+        if (!evidenceUri.endsWith("/")) evidenceUri += "/";
+        System.out.println("SERVING EVIDENCE FROM: " + evidenceUri);
         registry.addResourceHandler("/evidence/**")
                 .addResourceLocations(evidenceUri);
 
-        // Serve uploaded files
-        String uploadsUri = Paths.get("ai-service", "uploads").toUri().toString();
+        String uploadsUri = new java.io.File("ai-service/uploads").toURI().toString();
+        if (!uploadsUri.endsWith("/")) uploadsUri += "/";
         registry.addResourceHandler("/uploads/**")
                 .addResourceLocations(uploadsUri);
     }

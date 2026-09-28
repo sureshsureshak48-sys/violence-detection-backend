@@ -32,6 +32,9 @@ public class MediaController {
     @Autowired
     private EvidenceRepository evidenceRepository;
 
+    @Autowired
+    private FcmService fcmService;
+
     @PostMapping("/upload")
     public String uploadFile(
             @RequestParam("file") MultipartFile file)
@@ -147,7 +150,7 @@ public class MediaController {
 
             incident.setStatus(Incident.IncidentStatus.PENDING);
 
-            incidentRepository.save(incident);
+            incident = incidentRepository.save(incident);
 
             // Save annotated image evidence
             String annotatedPath = json.path("annotated_image_path").asText("");
@@ -178,6 +181,14 @@ public class MediaController {
                 audEvidence.setFileType("AUDIO");
                 evidenceRepository.save(audEvidence);
             }
+
+            // Send push notification instantly to all guards/admins
+            fcmService.sendToAllUsers(
+                    "⚠️ New Violence Detected!",
+                    "A video upload detected a " + incident.getIncidentType() + ". Needs your immediate review.",
+                    "control_room",
+                    String.valueOf(incident.getId())
+            );
         }
 
         return response.getBody();

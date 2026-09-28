@@ -22,4 +22,10 @@ public class EvidenceController {
     public List<Evidence> getEvidenceByIncident(@PathVariable Long incidentId) {
         return evidenceRepository.findByIncidentId(incidentId);
     }
+    
+    @DeleteMapping("/{id}")
+    public String deleteEvidence(@PathVariable Long id) {
+        evidenceRepository.deleteById(id);
+        return "Evidence deleted";
+    }
 }

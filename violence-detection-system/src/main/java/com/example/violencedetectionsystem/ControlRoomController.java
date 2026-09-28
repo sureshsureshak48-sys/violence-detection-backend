@@ -62,24 +62,17 @@ public class ControlRoomController {
         incidentRepository.save(incident);
 
         Alert alert = new Alert();
-        alert.setMessage(finalType + " detected");
+        if (finalType.toLowerCase().contains("detected")) {
+            alert.setMessage(finalType);
+        } else {
+            alert.setMessage(finalType + " Detected");
+        }
         alert.setAlertTime(java.time.LocalDateTime.now().toString());
         alert.setViolenceType(finalType);
         alert.setConfidence(incident.getConfidence());
         alert.setIncidentId(incident.getId());
 
         alertRepository.save(alert);
-
-        if (incident.getEvidencePath() != null && !incident.getEvidencePath().isEmpty()) {
-            Evidence evidence = new Evidence();
-            evidence.setIncidentId(incident.getId());
-            evidence.setFilePath(incident.getEvidencePath());
-
-            String path = incident.getEvidencePath().toLowerCase();
-            evidence.setFileType(path.endsWith(".mp4") ? "VIDEO" : "IMAGE");
-
-            evidenceRepository.save(evidence);
-        }
 
         int distance = 3 + (int)(Math.random() * 2); // 3 or 4 km
         fcmService.sendToAllUsers(

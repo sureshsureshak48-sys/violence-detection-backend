@@ -4,6 +4,7 @@ import pickle
 
 from violence_detector import analyze_full_video
 from audio_detector import AudioViolenceDetector
+from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
@@ -59,15 +60,7 @@ def detect_video():
     if video_violence_types:
         overall_type = video_violence_types[-1] # take the most recent clear type
     else:
-        max_persons = merged_objects.get("person", 0)
-        if max_persons >= 3:
-            overall_type = "Group Fight"
-        elif max_persons == 2:
-            overall_type = "Assault/Fight"
-        elif merged_objects:
-            overall_type = "Suspicious Activity"
-        else:
-            overall_type = "No clear violence type"
+        overall_type = "N/A"
 
     audio_result = audio_detector.detect(video_path)
 
@@ -203,6 +196,9 @@ def analyze_rtsp():
         "message": "RTSP analysis endpoint ready"
     })
 
+@app.route("/evidence/<path:filename>")
+def serve_evidence(filename):
+    return send_from_directory("evidence", filename)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860)
+    app.run(host="0.0.0.0", port=5000)

@@ -18,6 +18,12 @@ public class CameraController {
     public Camera addCamera(@RequestBody Camera camera) {
         return cameraRepository.save(camera);
     }
+    
+    @DeleteMapping("/{id}")
+    public String deleteCamera(@PathVariable Long id) {
+        cameraRepository.deleteById(id);
+        return "Camera deleted";
+    }
 
     @Autowired
     private RtspStreamService rtspStreamService;
@@ -27,7 +33,7 @@ public class CameraController {
             @RequestParam String rtspUrl) {
 
         rtspStreamService.startDetection(
-                rtspUrl
+                rtspUrl, null
         );
 
         return "RTSP Detection Started";
@@ -41,14 +47,20 @@ public class CameraController {
                         .orElseThrow();
 
         new Thread(() -> {
-            rtspStreamService.startDetection(camera.getRtspUrl());
+            rtspStreamService.startDetection(camera.getRtspUrl(), cameraId);
         }).start();
 
         return "Detection Started";
     }
+    
     @PostMapping("/stopDetection")
     public String stopDetection() {
         rtspStreamService.stopDetection();
         return "Detection Stopped";
+    }
+    
+    @GetMapping("/status")
+    public Long getActiveCamera() {
+        return rtspStreamService.getActiveCameraId();
     }
 }

@@ -32,6 +32,9 @@ public class RtspStreamService {
     @Autowired
     private EvidenceRepository evidenceRepository;
 
+    @Autowired
+    private FcmService fcmService;
+
     private final RestTemplate restTemplate = new RestTemplate();
 
     @org.springframework.beans.factory.annotation.Value("${AI_SERVICE_URL:http://127.0.0.1:5000}")
@@ -40,17 +43,24 @@ public class RtspStreamService {
     // ~2-3 seconds of clip per analysis chunk (fps depend pannirukum)
     private static final int CLIP_FRAME_COUNT = 48;
 
-    // idha volatile-ah vaikkurom, stopDetection() velila irundhu loop-ah nிறுthanum
     private volatile boolean running = false;
+    private volatile Long activeCameraId = null;
 
-    public void startDetection(String rtspUrl) {
+    public Long getActiveCameraId() {
+        return running ? activeCameraId : null;
+    }
+
+    public void startDetection(String rtspUrl, Long cameraId) {
 
         running = true;
+        activeCameraId = cameraId;
 
         VideoCapture cap = new VideoCapture(rtspUrl);
 
         if (!cap.isOpened()) {
             System.out.println("RTSP Stream Open Failed");
+            running = false;
+            activeCameraId = null;
             return;
         }
 
@@ -103,11 +113,14 @@ public class RtspStreamService {
         }
 
         cap.release();
+        running = false;
+        activeCameraId = null;
         System.out.println("RTSP detection stopped.");
     }
 
     public void stopDetection() {
         running = false;
+        activeCameraId = null;
     }
 
     private void sendClipForAnalysis(String clipPath) {
@@ -166,7 +179,7 @@ public class RtspStreamService {
 
                 incident.setVerified(false);
 
-                incidentRepository.save(incident);
+                incident = incidentRepository.save(incident);
 
                 // Save annotated image evidence
                 String annotatedPath = json.path("annotated_image_path").asText("");
@@ -199,6 +212,14 @@ public class RtspStreamService {
                 }
 
                 System.out.println("INCIDENT AND EVIDENCE CREATED FROM CAMERA");
+
+                // Send push notification instantly to all guards/admins
+                fcmService.sendToAllUsers(
+                        "⚠️ New Violence Detected!",
+                        "A live camera detected a " + incident.getIncidentType() + ". Needs your immediate review.",
+                        "control_room",
+                        String.valueOf(incident.getId())
+                );
             }
 
         } catch (Exception e) {
